@@ -3,9 +3,9 @@
 # author: Damian Legutko (rustleofcicada@gmail.com)
 
 from clivia import Clivia, CliviaTCPServer
-from load_commands import load_commands
+from examples.load_commands import load_commands
 
-from your_network_code import network_connect, get_ifconfig_ip
+from examples.your_network_code import network_connect, get_ifconfig_ip
 
 network_connect()
 ip = get_ifconfig_ip()

@@ -3,7 +3,7 @@
 # author: Damian Legutko (rustleofcicada@gmail.com)
 
 from clivia import Clivia, CliviaSession
-from load_commands import load_commands
+from examples.load_commands import load_commands
 
 from machine import Pin, UART
 uart = UART(0, 115200, tx=Pin(0), rx=Pin(1))
@@ -13,7 +13,7 @@ load_commands(cli)
 
 cli_stream = CliviaSession(
     uart, 'uart/in',
-    uart, 'uart/out')
+    uart, 'uart/out', 0)
 cli.register_session(cli_stream)
 
 with cli:

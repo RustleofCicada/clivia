@@ -3,12 +3,12 @@
 # author: Damian Legutko (rustleofcicada@gmail.com)
 
 from clivia import Clivia, CliviaTCPClient
-from load_commands import load_commands
+from examples.load_commands import load_commands
 
-from your_network_code import network_connect
+from examples.your_network_code import network_connect
 
 network_connect()
-server_ip = '192.168.0.2' # write your TCP server ip here!!!
+server_ip = '0.0.0.0' # write your TCP server ip here!!!
 port = 5555
 
 cli = Clivia()

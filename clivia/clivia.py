@@ -1,7 +1,7 @@
 import argparse
 import shlex
 import sys, io
-import select
+import uselect as select
 import socket
 import builtins
 from micropython import const
@@ -175,27 +175,27 @@ class Clivia:
                 raise RuntimeError # todo other error here
 
     def close_session(self, stream_in_name):
-        '''
         session = self.sessions[stream_in_name]
         self.sessions.pop(stream_in_name)
         session.close()
-        del(session)
-        '''
+        self.in_streams.pop(stream_in_name)
+        self.out_streams.pop(session.stream_out_name)
+        
     @staticmethod
     def print_to_stream(stream_out):        
         def _print(*args, **kwargs):
-            kwargs.pop("file", None)
-            builtins.print(*args, file=stream_out, **kwargs)
+            kwargs["file"] = stream_out
+            builtins.print(*args, **kwargs)
         return _print
 
 class CliviaFile(CliviaSession):
-    def __init__(self, input, output, output_mode='w', perm_lvl=0):
+    def __init__(self, input_filename, output_filename, output_mode='w', perm_lvl=0):
         super().__init__(
-            open(input, 'r'),           f"file/{input}/in",
-            open(output, output_mode),  f"file/{output}/out",
+            open(input_filename, 'r'),           f"file/{input_filename}/in",
+            open(output_filename, output_mode),  f"file/{output_filename}/out",
             perm_lvl)
-        self.input_filename = input
-        self.output_filename = output
+        self.input_filename = input_filename
+        self.output_filename = output_filename
         self.close_in = True
         self.close_out = True
 
@@ -212,12 +212,18 @@ class CliviaTCPClient(CliviaSession):
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setblocking(blocking)
-        self.socket.connect((self.server_ip, self.port))
+        self.connect()
         super().__init__(
             self.socket, f"tcpc/{server_ip}/in",
             self.socket, f"tcpc/{server_ip}/out",
             perm_lvl)
         self.close_in = True
+    def connect(self):
+        try:
+            self.socket.connect((self.server_ip, self.port))
+        except OSError as e:
+            if e.args[0] not in [errno.EINPROGRESS, errno.ETIMEDOUT]:
+                print('Error connecting', e) # todo change this
 
 class CliviaTCPServerSession(CliviaSession):
     def __init__(self, client_ip, port, socket, perm_lvl=0):

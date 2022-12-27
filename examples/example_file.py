@@ -2,15 +2,15 @@
 # description: Example usage of Clivia on a file containing commands
 # author: Damian Legutko (rustleofcicada@gmail.com)
 
-from clivia import Clivia, CliviaSession
-from load_commands import load_commands
+from clivia import Clivia, CliviaFile
+from examples.load_commands import load_commands
+
+# error: stackoverflow.com/questions/4853533/select-select-with-regular-files
 
 cli = Clivia()
 load_commands(cli)
 
-cli_file = CliviaSession(
-    open('input.txt', 'r'), 'file/input/in',
-    open('output.txt', 'w'), 'file/output/out')
+cli_file = CliviaFile('examples/input.txt', 'examples/output.txt' 'w')
 cli.register_session(cli_file)
 
 with cli:

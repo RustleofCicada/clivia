@@ -1,21 +1,23 @@
-import builtins
-from machine import Pin
+import network
+from time import sleep
 
-led = Pin("LED", Pin.OUT)
+#WIFI config
+ssid = 'dlink_DWR-921'
+password = '44590529'
+ip = None
 
-def led_control(state: bool, verbose=True, print=builtins.print) -> int:
-    global led
-    led.value(state)
-    
-    if verbose:
-        print(f"Led turned {'on' if state else 'off'}.")
-    
-    return led.value()
+def network_connect(): #WIFI connection
+    global ip
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    wlan.connect(ssid, password)
+    while wlan.isconnected() == False:
+        print('Waiting for connection...')
+        sleep(1)
+    ip = wlan.ifconfig()[0]
+    print(f'Connected on {ip}')
+    return ip
 
-def print_welcome(verbose=True, quiet=False, print=builtins.print) -> None:
-
-    if verbose:
-        print("Welcome to Clivia, CLI library via multiple interfaces on Micropython boards!")
-
-    elif quiet:
-        print("Welcome to Clivia.")
+def get_ifconfig_ip():
+    global ip
+    return ip
