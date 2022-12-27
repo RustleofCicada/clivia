@@ -1,0 +1,32 @@
+~help
+returns system commands
+
+~session-new [name] [args]
+creates new CLI session
+
+~session-exit [name] [--all]
+exits existing CLI session
+
+~session-ls
+list existing CLI sessions
+
+~mount [type] [args]
+mounts stream
+
+~unmount [name]
+unmounts stream
+
+~mount-ls
+lists mounted streams
+
+~reboot
+reboots a device
+
+~shutdown
+shuts down device
+
+exit
+exits current session
+
+user-command -v >> /mnt/uart/0
+sends command output via /mnt/uart/0 stream
