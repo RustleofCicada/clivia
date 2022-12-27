@@ -11,22 +11,23 @@ network_connect()
 ip = get_ifconfig_ip()
 port = 5555
 
+'''
 def on_client_connected(client_ip, client_port):
     print(f"New TCP client connected to Clivia: {client_ip}, {client_port}")
+'''
 
 cli = Clivia()
 load_commands(cli)
 
-cli_tcps = CliviaTCPServer(ip, port)
-cli_tcps.on_new_client = on_client_connected
-cli.mount(cli_tcps)
+tcps = CliviaTCPServer(ip, port)
+#cli_tcps.on_new_client = on_client_connected
 
 print(f"Clivia TCP server starting on IP: {ip}")
 
 with cli:
     while True:
         cli.loop()
-        cli_tcps.accept_clients()
+        tcps.accept_clients(cli)
 
 '''
 Connect via TCP connection and try following commands:

@@ -2,7 +2,7 @@
 # description: Example of mouning UART stream to Clivia
 # author: Damian Legutko (rustleofcicada@gmail.com)
 
-from clivia import Clivia, CliviaStream
+from clivia import Clivia, CliviaSession
 from load_commands import load_commands
 
 from machine import Pin, UART
@@ -11,8 +11,10 @@ uart = UART(0, 115200, tx=Pin(0), rx=Pin(1))
 cli = Clivia()
 load_commands(cli)
 
-cli_stream = CliviaStream(uart)
-cli.mount(cli_stream)
+cli_stream = CliviaSession(
+    uart, 'uart/in',
+    uart, 'uart/out')
+cli.register_session(cli_stream)
 
 with cli:
     while True:

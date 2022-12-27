@@ -3,13 +3,13 @@
 # author: Damian Legutko (rustleofcicada@gmail.com)
 
 from clivia import Clivia, CliviaUSB
-from load_commands import load_commands
+from examples.load_commands import load_commands
 
 cli = Clivia()
 load_commands(cli)
 
 cli_usb = CliviaUSB()
-cli.mount(cli_usb)
+cli.register_session(cli_usb)
 
 with cli:
     while True:

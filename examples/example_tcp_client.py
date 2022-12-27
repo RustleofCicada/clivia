@@ -15,7 +15,7 @@ cli = Clivia()
 load_commands(cli)
 
 cli_tcpc = CliviaTCPClient(server_ip, port)
-cli.mount(cli_tcpc)
+cli.register_session(cli_tcpc)
 
 with cli:
     while True:

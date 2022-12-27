@@ -2,20 +2,19 @@
 # description: Example usage of Clivia on a file containing commands
 # author: Damian Legutko (rustleofcicada@gmail.com)
 
-from clivia import Clivia, CliviaFile
+from clivia import Clivia, CliviaSession
 from load_commands import load_commands
 
 cli = Clivia()
 load_commands(cli)
 
-cli_file = CliviaFile(
-    input='input.txt',
-    output='output.txt',
-    output_mode='a')
-cli.mount(cli_file)
+cli_file = CliviaSession(
+    open('input.txt', 'r'), 'file/input/in',
+    open('output.txt', 'w'), 'file/output/out')
+cli.register_session(cli_file)
 
 with cli:
-    while not cli_file.completed():
+    while not cli_file.closed:
         cli.loop()
 
 '''
