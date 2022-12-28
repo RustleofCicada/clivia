@@ -7,7 +7,7 @@ import builtins
 from micropython import const
 
 class CliviaSession:
-    def __init__(self, stream_in, stream_in_name:str, stream_out, stream_out_name:str, perm_lvl:int):
+    def __init__(self, stream_in, stream_in_name:str, stream_out, stream_out_name:str, perm_lvl:int=0):
         self.stream_in = stream_in
         self.stream_out = stream_out
         self.stream_in_name = stream_in_name
@@ -19,18 +19,14 @@ class CliviaSession:
         self.cache = object()
         self.echo_enabled = False
         self.echo_format = '{}'
-        self.closed = False
+        self.closed = True
 
     def open(self):
-        pass
+        self.closed = False
 
     def close(self):
-        if self.close_in:
-            self.stream_in.close()
-        
-        if self.close_out:
-            self.stream_out.close()
-        
+        if self.close_in:  self.stream_in.close()
+        if self.close_out: self.stream_out.close()
         self.closed = True
 
     def set_echo(self, enabled, echo_format=None):
@@ -39,11 +35,30 @@ class CliviaSession:
             self.echo_format = echo_format
 
     def echo(self, line):
-        print = Clivia.print_to_stream(self.stream_out)
-        
         line = line.strip()
         if self.echo_enabled and len(line) > 0:
-            print(self.echo_format.format(line))
+            self.print(self.echo_format.format(line))
+    
+    def print(self, *args, **kwargs):
+        if "file" not in kwargs.keys():
+            kwargs["file"] = self.stream_out
+        return builtins.print(*args, **kwargs)
+    
+    def execute(self, func, args_obj, metadata):
+        try:
+            kwargs = {"print": self.print}
+            for field in dir(args_obj):
+                if field is '__class__': continue # refactor this
+                kwargs[field] = getattr(args_obj, field)
+            retval = func(**kwargs)
+        except Exception as exc:
+            sys.print_exception(exc)
+            raise RuntimeError # todo other error here
+        
+        try:
+            self.return_handler(metadata["line"], retval, print=print)
+        except Exception as exc:
+            raise RuntimeError # todo other error here
 
     @staticmethod
     def empty_return_handler(cmdin:str, retval, print=builtins.print) -> None: pass
@@ -81,14 +96,9 @@ class Clivia:
         is_input = name in self.in_streams.keys()
         is_output = name in self.out_streams.keys()
 
-        if is_input and is_output:
-            return self.in_streams[name], Clivia.STREAM_IO
-        
-        if is_input:
-            return self.in_streams[name], Clivia.STREAM_IN
-        
-        if is_output:
-            return self.out_streams[name], Clivia.STREAM_OUT
+        if is_input and is_output:  return self.in_streams[name],  Clivia.STREAM_IO
+        if is_input:                return self.in_streams[name],  Clivia.STREAM_IN        
+        if is_output:               return self.out_streams[name], Clivia.STREAM_OUT
         
         return None, Clivia.STREAM_CLOSED
 
@@ -96,6 +106,7 @@ class Clivia:
         self.sessions[session.stream_in_name] = session
         self.mount_stream(session.stream_out_name, session.stream_out, Clivia.STREAM_OUT)
         self.mount_stream(session.stream_in_name, session.stream_in, Clivia.STREAM_IN)
+        session.open()
 
     def add_command(self, command, func, parser: argparse.ArgumentParser, perm_lvl = 0):
         self.parsers[command] = parser
@@ -140,13 +151,18 @@ class Clivia:
             stream_out = self.out_streams[stream_out_name]
 
             command = words.pop(0)
-            if command not in self.commands.keys():
-                raise KeyError # todo other error here
             
             # special system commands
             if command == 'exit':
                 self.close_session(stream_in_name) # self.close_session(session) ??
                 continue
+            elif command == 'cat':
+                Clivia.print_to_stream(stream_out)(' '.join(words))
+                continue
+            
+            if command not in self.commands.keys():
+                raise KeyError # todo other error here
+            
 
             func, perm_lvl = self.commands[command]
             if perm_lvl > session.perm_lvl:
@@ -154,23 +170,14 @@ class Clivia:
             
             parser = self.parsers[command]
             try:
-                args = parser.parse_args(words, print=print)
+                args_obj = parser.parse_args(words, print=print)
             except Exception as exc:
                 sys.print_exception(exc)
                 raise ValueError # todo other error here
 
+            metadata = {"line": line, "command": command}
             try:
-                kwargs = {"print": Clivia.print_to_stream(stream_out)}
-                for field in dir(args):
-                    if field is '__class__': continue # refactor this
-                    kwargs[field] = getattr(args, field)
-                retval = func(**kwargs)
-            except Exception as exc:
-                sys.print_exception(exc)
-                raise RuntimeError # todo other error here
-            
-            try:
-                session.return_handler(line, retval, print=print)
+                session.execute(func, args_obj, metadata)
             except Exception as exc:
                 raise RuntimeError # todo other error here
 
@@ -180,13 +187,6 @@ class Clivia:
         session.close()
         self.in_streams.pop(stream_in_name)
         self.out_streams.pop(session.stream_out_name)
-        
-    @staticmethod
-    def print_to_stream(stream_out):        
-        def _print(*args, **kwargs):
-            kwargs["file"] = stream_out
-            builtins.print(*args, **kwargs)
-        return _print
 
 class CliviaFile(CliviaSession):
     def __init__(self, input_filename, output_filename, output_mode='w', perm_lvl=0):

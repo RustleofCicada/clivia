@@ -9,6 +9,7 @@ ip = None
 def network_connect(): #WIFI connection
     global ip
     wlan = network.WLAN(network.STA_IF)
+    wlan.disconnect()
     wlan.active(True)
     wlan.connect(ssid, password)
     while wlan.isconnected() == False:
