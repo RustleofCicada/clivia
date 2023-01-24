@@ -30,7 +30,7 @@ class _Arg:
                     arg = args.pop(0)
                     try:
                         if self.type == bool:
-                            return arg.lower() in ['true', '1', 'y', 'yes']
+                            return (arg.lower() in ['true', '1', 'y', 'yes'])
                         return self.type(arg) # CHANGE
                     except ValueError:
                         raise _ArgError("'%s' is not valid value for type: %s" % (arg, self.type.__name__))

@@ -3,7 +3,7 @@
 # author: Damian Legutko (rustleofcicada@gmail.com)
 
 from clivia import Clivia, CliviaUSB
-from load_commands import load_commands
+from examples.load_commands import load_commands
 
 cli = Clivia()
 load_commands(cli)

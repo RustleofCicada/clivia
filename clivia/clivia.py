@@ -4,255 +4,228 @@ import sys, io
 import uselect as select
 import socket
 import builtins
+import random
 from micropython import const
 
 class CliviaSession:
-    def __init__(self, stream_in, stream_in_name:str, stream_out, stream_out_name:str, perm_lvl:int=0):
-        self.stream_in = stream_in
-        self.stream_out = stream_out
-        self.stream_in_name = stream_in_name
-        self.stream_out_name = stream_out_name
+    def __init__(self, name, stdin, stdout):
+        self.name = name
+        self.stdin = stdin
+        self.stdout = stdout
         self.close_in = False
         self.close_out = False
-        self.return_handler = CliviaSession.empty_return_handler
-        self.perm_lvl = perm_lvl
-        self.cache = object()
         self.echo_enabled = False
         self.echo_format = '{}'
-        self.closed = True
+        #self.return_handler = CliviaSession.empty_return_handler
 
     def open(self):
-        self.closed = False
+        return True
 
     def close(self):
-        if self.close_in:  self.stream_in.close()
-        if self.close_out: self.stream_out.close()
-        self.closed = True
+        if self.close_in:  self.stdin.close()
+        if self.close_out: self.stdout.close()
+    
+    def readline(self):
+        return self.stdin.readline()
 
     def set_echo(self, enabled, echo_format=None):
         self.echo_enabled = enabled
         if echo_format is not None:
             self.echo_format = echo_format
 
-    def echo(self, line):
-        line = line.strip()
-        if self.echo_enabled and len(line) > 0:
-            self.print(self.echo_format.format(line))
+    def echo(self, input_line):
+        input_line = input_line.strip()
+        if self.echo_enabled and len(input_line) > 0:
+            self.print(self.echo_format.format(input_line))
+
+
+class Clivia:
+    SESSION_ID_COUNTER = 0
+    OPERATOR_REDIRECT_OUT = const('>')
+
+    def __init__(self):
+        self.sessions    : dict[str, CliviaSession] = {}   # name: session object (name, permlvl, cache)
+        self.parsers     : dict[str, argparse.ArgumentParser] = {}   # command: ArgumentParser
+        self.commands    : dict[str, (function, int)] = {} # command: (func, permlvl)
     
-    def print(self, *args, **kwargs):
-        if "file" not in kwargs.keys():
-            kwargs["file"] = self.stream_out
-        return builtins.print(*args, **kwargs)
+    def __enter__(self):
+        for session in self.sessions.values():
+            session.open()
+        
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        for session in self.sessions.values():
+            self.remove_session(session.name)
+
+    def register_session(self, session: CliviaSession):
+        self.sessions[session.name] = session
     
-    def execute(self, func, args_obj, metadata):
+    def add_command(self, command, func, parser: argparse.ArgumentParser):
+        self.parsers[command] = parser
+        self.commands[command] = func
+
+    @micropython.viper
+    def loop(self):
+    
+        readers, _, _ = select.select([session.stdin for session in self.sessions.values()], [], [], 0)
+        
+        for reader in readers:
+            source_session = object()
+            for session in self.sessions.values():
+                if session.stdin == reader:
+                    source_session = session
+                    break
+
+            line = source_session.readline()
+            if isinstance(line, bytes):
+                line = line.decode('utf-8')
+            line.strip()
+            #if len(line) == 0: continue
+
+            source_session.echo(line)
+            
+            self.execute_input(line, source_session)
+    
+    def execute_input(self, line_input, source_session):
+        session = source_session
+
+        words = shlex.split(line_input)
+        if len(words) == 0: return # fix this
+
+        command = words[0]
+        if command is "exit":
+            self.remove_session(session.name)
+            return
+        elif command is "cat":
+            session.print(' '.join(words))
+
+        func = self.commands[command]
+        
+        argss, unparsed = self.parsers[command].parse_known_args(words[1:])
+
+        stream_out = session.stdout
+        if Clivia.OPERATOR_REDIRECT_OUT in unparsed:
+            if unparsed.index(Clivia.OPERATOR_REDIRECT_OUT) == len(unparsed) - 2:
+                stream_out = self.sessions[unparsed[-1]].stdout
+        
         try:
-            kwargs = {"print": self.print}
-            for field in dir(args_obj):
-                if field is '__class__': continue # refactor this
-                kwargs[field] = getattr(args_obj, field)
+            kwargs = {"print": Clivia.printto(stream_out)}
+            for field in dir(argss):
+                if field is '__class__': continue
+                kwargs[field] = getattr(argss, field)
             retval = func(**kwargs)
+            #retval = func(**argss, print=lambda *a, **k: builtins.print(*a, file=stream_out, **k))
         except Exception as exc:
             sys.print_exception(exc)
             raise RuntimeError # todo other error here
-        
-        try:
-            self.return_handler(metadata["line"], retval, print=print)
-        except Exception as exc:
-            raise RuntimeError # todo other error here
 
-    @staticmethod
-    def empty_return_handler(cmdin:str, retval, print=builtins.print) -> None: pass
+    def parse_words(self, command, words):
+        return self.parsers[command].parse_args(words)
 
-class Clivia:
-    STREAM_CLOSED = const(0)
-    STREAM_IN = const(1)
-    STREAM_OUT = const(2)
-    STREAM_IO = const(3)
-    OPERATOR_IN = const('<<')
-    OPERATOR_OUT = const('>>')
-
-    def __init__(self):
-        self.in_streams  : dict[str, io.IOBase]     = {}   # name: stream object
-        self.out_streams : dict[str, io.IOBase]     = {}   # name: stream object
-        self.sessions    : dict[str, CliviaSession] = {}   # sin name: session object (sout name, permlvl, cache)
-        self.parsers     : dict[str, argparse.ArgumentParser] = {}   # command: ArgumentParser
-        self.commands    : dict[str, (function, int)] = {} # command: (func, permlvl)
-        self.select_timeout = 0.5
-    
-    def __enter__(self):
-        pass
-    
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        for session in self.sessions.values():
-            self.close_session(session.stream_in_name)
-
-    def mount_stream(self, name, stream, mode):
-        if mode == Clivia.STREAM_IN or mode == Clivia.STREAM_IO:
-            self.in_streams[name] = stream
-        if mode == Clivia.STREAM_OUT or mode == Clivia.STREAM_IO:
-            self.out_streams[name] = stream
-
-    def get_stream(self, name):
-        is_input = name in self.in_streams.keys()
-        is_output = name in self.out_streams.keys()
-
-        if is_input and is_output:  return self.in_streams[name],  Clivia.STREAM_IO
-        if is_input:                return self.in_streams[name],  Clivia.STREAM_IN        
-        if is_output:               return self.out_streams[name], Clivia.STREAM_OUT
-        
-        return None, Clivia.STREAM_CLOSED
-
-    def register_session(self, session: CliviaSession):
-        self.sessions[session.stream_in_name] = session
-        self.mount_stream(session.stream_out_name, session.stream_out, Clivia.STREAM_OUT)
-        self.mount_stream(session.stream_in_name, session.stream_in, Clivia.STREAM_IN)
-        session.open()
-
-    def add_command(self, command, func, parser: argparse.ArgumentParser, perm_lvl = 0):
-        self.parsers[command] = parser
-        self.commands[command] = (func, perm_lvl)
-
-    def loop(self):
-        readers, _, _ = select.select(list(self.in_streams.values()), [], [], self.select_timeout)
-        for reader in readers:
-            # rewrite this
-            stream_in_name, stream = [(key, value) for key, value in self.in_streams.items() if value == reader][0]
-
-            line = stream.readline()
-            if type(line) is bytes: line = line.decode('utf-8')
-            if len(line.strip()) == 0: continue
-            
-            words = shlex.split(line)
-
-            if (Clivia.OPERATOR_IN in words) and (Clivia.OPERATOR_OUT in words):
-                raise ValueError # other error here
-
-            if Clivia.OPERATOR_IN in words: # refactor this to allow multiple streams?
-                stream_in_name = words.pop()
-                operator = words.pop()
-                if operator != Clivia.OPERATOR_IN:
-                    raise ValueError # todo other error here
-                if stream_in_name not in self.in_streams.keys():
-                    raise KeyError # todo other error here
-            
-            session = self.sessions[stream_in_name]
-            session.echo(line)
-            
-            if Clivia.OPERATOR_OUT in words:
-                stream_out_name = words.pop()
-                operator = words.pop()
-                if operator != Clivia.OPERATOR_OUT:
-                    raise ValueError # todo other error here
-                if stream_out_name not in self.out_streams.keys():
-                    raise KeyError # todo other error here
-            else:
-                stream_out_name = session.stream_out_name
-            
-            stream_out = self.out_streams[stream_out_name]
-
-            command = words.pop(0)
-            
-            # special system commands
-            if command == 'exit':
-                self.close_session(stream_in_name) # self.close_session(session) ??
-                continue
-            elif command == 'cat':
-                Clivia.print_to_stream(stream_out)(' '.join(words))
-                continue
-            
-            if command not in self.commands.keys():
-                raise KeyError # todo other error here
-            
-
-            func, perm_lvl = self.commands[command]
-            if perm_lvl > session.perm_lvl:
-                raise PermissionError # todo other error here
-            
-            parser = self.parsers[command]
-            try:
-                args_obj = parser.parse_args(words, print=print)
-            except Exception as exc:
-                sys.print_exception(exc)
-                raise ValueError # todo other error here
-
-            metadata = {"line": line, "command": command}
-            try:
-                session.execute(func, args_obj, metadata)
-            except Exception as exc:
-                raise RuntimeError # todo other error here
-
-    def close_session(self, stream_in_name):
-        session = self.sessions[stream_in_name]
-        self.sessions.pop(stream_in_name)
+    def remove_session(self, session_name):
+        session = self.sessions[session_name]
+        self.sessions.pop(session_name)
         session.close()
-        self.in_streams.pop(stream_in_name)
-        self.out_streams.pop(session.stream_out_name)
+    
+    @staticmethod
+    def printto(sout):
+        def _print(*a, **k):
+            nonlocal sout
+            k['file'] = sout
+            return builtins.print(*a, **k)
+        return _print
+    
+    @staticmethod
+    def get_unique_session_name():
+        unique_name = f'session{Clivia.SESSION_ID_COUNTER:d}'
+        Clivia.SESSION_ID_COUNTER += 1
+        return unique_name
+
+
 
 class CliviaFile(CliviaSession):
-    def __init__(self, input_filename, output_filename, output_mode='w', perm_lvl=0):
+    def __init__(self, input_filename, output_filename, output_mode='w', name=None):
         super().__init__(
-            open(input_filename, 'r'),           f"file/{input_filename}/in",
-            open(output_filename, output_mode),  f"file/{output_filename}/out",
-            perm_lvl)
+            f"file/{Clivia.get_unique_session_name()}" if (name is None) else name,
+            open(input_filename, 'r'),
+            open(output_filename, output_mode))
+        
         self.input_filename = input_filename
         self.output_filename = output_filename
         self.close_in = True
         self.close_out = True
 
 class CliviaUSB(CliviaSession):
-    def __init__(self, perm_lvl=0):
+    def __init__(self, name=None):
         super().__init__(
-            sys.stdin,  'usb/in',
-            sys.stdout, 'usb/out',
-            perm_lvl)
+            f"usb/{Clivia.get_unique_session_name()}" if (name is None) else name,
+            sys.stdin,
+            sys.stdout)
 
 class CliviaTCPClient(CliviaSession):
-    def __init__(self, server_ip, port, blocking=False, perm_lvl=0):
+    def __init__(self, server_ip, port, blocking=False, name=None):
         self.server_ip = server_ip
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setblocking(blocking)
-        self.connect()
         super().__init__(
-            self.socket, f"tcpc/{server_ip}/in",
-            self.socket, f"tcpc/{server_ip}/out",
-            perm_lvl)
+            f"tcpc/{server_ip}" if (name is None) else name,
+            self.socket,
+            self.socket)
         self.close_in = True
-    def connect(self):
+    
+    # Overrides: CliviaSession.open
+    def open(self):
         try:
             self.socket.connect((self.server_ip, self.port))
+            return super().open()
         except OSError as e:
+            self.closed = True
             if e.args[0] not in [errno.EINPROGRESS, errno.ETIMEDOUT]:
                 print('Error connecting', e) # todo change this
+        return False
 
 class CliviaTCPServerSession(CliviaSession):
-    def __init__(self, client_ip, port, socket, perm_lvl=0):
+    def __init__(self, client_ip, port, socket, name=None):
         self.client_ip = client_ip
         self.port = port
         self.socket = socket
         super().__init__(
-            self.socket, f"tcps/{client_ip}/in",
-            self.socket, f"tcps/{client_ip}/out",
-            perm_lvl)
+            f"tcps/{client_ip}" if (name is None) else name,
+            self.socket,
+            self.socket)
         self.close_in = True
+    
+    '''
+    # Overrides: CliviaSession.open
+    def open(self):
+        try:
+            self.socket.connect() # reconnect
+            return super().open()
+        except OSError as e:
+            self.closed = True
+            if e.args[0] not in [errno.EINPROGRESS, errno.ETIMEDOUT]:
+                print('Error connecting', e) # todo change this
+        return False
+    '''
 
 class CliviaTCPServer():
-    def __init__(self, ip, port, blocking=False, perm_lvl=0):
+    def __init__(self, ip, port, blocking=False):
         self.ip = ip
         self.port = port
-        self.perm_lvl = perm_lvl
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind((self.ip, self.port))
         self.socket.listen()
         self.socket.setblocking(blocking)
+        self.sessions = []
     
-    def accept_clients(self, cli):        
+    def accept_clients(self, cli):
         try:
             tcp = self.socket.accept()
             if tcp is not None:
                 conn, addr = tcp
                 client_ip, port = addr
-                session = CliviaTCPServerSession(client_ip, port, conn, perm_lvl=self.perm_lvl)
-                cli.register_session(session)
+                session = CliviaTCPServerSession(client_ip, port, conn)
+                self.sessions.append(session)
+                cli.register_session(self.sessions[-1])
         except OSError as exc:
             if exc.errno == errno.EAGAIN: pass
